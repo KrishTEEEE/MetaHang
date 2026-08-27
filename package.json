@@ -1,0 +1,28 @@
+{
+  "name": "facehangout",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n client,server -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",
+    "client": "vite",
+    "server": "tsx watch server/index.ts",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/codec.test.ts && tsx test/face.test.ts && tsx test/controls.test.ts && tsx test/cranium.test.ts && tsx test/deform.test.ts && tsx test/holes.test.ts && tsx test/body.test.ts",
+    "test:relay": "node test/relay.test.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.35",
+    "three": "^0.185.1",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^10.0.4",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}
