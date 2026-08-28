@@ -46,7 +46,7 @@ const MOUTH_DEPTH = 0.7;
 /** Ambient-occlusion cheat: the back of the cavity is darker than its rim. */
 const MOUTH_SHADE = 0.45;
 
-type Hole = { ring: number[]; base: number; apex: number; depth: number; shade: number };
+type Hole = { ring: number[]; base: number; apex: number; depth: number; shade: number; isEye: boolean };
 
 /**
  * Video-textured membranes closing the mouth and eye holes.
@@ -59,7 +59,7 @@ type Hole = { ring: number[]; base: number; apex: number; depth: number; shade: 
 export class HoleFans {
   readonly mesh: THREE.Mesh;
   private geom = new THREE.BufferGeometry();
-  private material: THREE.MeshStandardMaterial;
+  readonly material: THREE.MeshStandardMaterial;
   private posAttr: THREE.BufferAttribute;
   private uvAttr: THREE.BufferAttribute;
   private holes: Hole[] = [];
@@ -68,7 +68,7 @@ export class HoleFans {
     const idx: number[] = [];
     const colors: number[] = [];
     let n = 0;
-    const add = (ring: number[], depth: number, shade: number) => {
+    const add = (ring: number[], depth: number, shade: number, eye = false) => {
       const base = n;
       n += ring.length;
       const apex = n++;
@@ -77,10 +77,10 @@ export class HoleFans {
         colors.push(1, 1, 1);
       }
       colors.push(shade, shade, shade);
-      this.holes.push({ ring, base, apex, depth, shade });
+      this.holes.push({ ring, base, apex, depth, shade, isEye: eye });
     };
     add(MOUTH_HOLE, MOUTH_DEPTH, MOUTH_SHADE);
-    for (const e of EYE_HOLES) add(e, 0, 1);
+    for (const e of EYE_HOLES) add(e, 0, 1, true);
 
     this.posAttr = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
     this.posAttr.setUsage(THREE.DynamicDrawUsage);
@@ -111,6 +111,16 @@ export class HoleFans {
    * 55 vertices, so this is cheap enough to run every frame alongside the face's
    * own normal recomputation.
    */
+  /**
+   * Vertical offset applied only to the eye membranes' texture coordinates.
+   *
+   * Looking at a screen points the eyes downward, so the avatar reads as
+   * avoiding you. Sampling the eye region slightly higher moves the visible
+   * iris up. It is a cosmetic shift of where the pixels come from, not real
+   * gaze redirection — push it far and it will sample eyelid instead.
+   */
+  eyeLift = 0;
+
   update(pos: ArrayLike<number>, uv: ArrayLike<number>): void {
     const P = this.posAttr.array as Float32Array;
     const U = this.uvAttr.array as Float32Array;
@@ -128,7 +138,10 @@ export class HoleFans {
         P[o] = pos[v * 3]; P[o + 1] = pos[v * 3 + 1]; P[o + 2] = pos[v * 3 + 2];
         cx += P[o]; cy += P[o + 1]; cz += P[o + 2];
         const t = (h.base + i) * 2;
-        U[t] = uv[v * 2]; U[t + 1] = uv[v * 2 + 1];
+        // v is texture-space, which runs bottom-up, so a positive lift raises
+        // the sampled region and the iris appears to look further up.
+        U[t] = uv[v * 2];
+        U[t + 1] = uv[v * 2 + 1] + (h.isEye ? this.eyeLift : 0);
         cu += U[t]; cv += U[t + 1];
       }
       const k = h.ring.length;

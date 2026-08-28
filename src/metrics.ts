@@ -152,6 +152,7 @@ export const M = {
   encode: new Stat("ms"), // canvas.toBlob JPEG
   encodeBytes: new Stat("B"),
   encodeQueued: new Stat("ms"), // time a send waited because one was in flight
+  dropped: new Stat("B"), // frames abandoned rather than queued behind a backlog
 
   // --- transport ---
   rtt: new Stat("ms"), // app-level ping through the relay
@@ -186,6 +187,7 @@ export const M = {
         encodeMs: this.encode.snapshot(),
         encodeBytes: this.encodeBytes.snapshot(),
         encodeQueuedMs: this.encodeQueued.snapshot(),
+        droppedFrames: this.dropped.count,
       },
       transport: {
         rttMs: this.rtt.snapshot(),

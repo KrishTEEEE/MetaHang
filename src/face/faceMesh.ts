@@ -92,6 +92,39 @@ export class FaceHead {
     this.fans.update(this.posAttr.array, this.uvAttr.array);
   }
 
+  /**
+   * Canvas filter applied as the crop is blitted, e.g.
+   * "brightness(1.3) contrast(1.1) saturate(1.1)". Empty string disables it.
+   *
+   * This is deliberately separate from the lighting controls below: a dark face
+   * can come from a dark *capture* or from dark *lighting*, and the only way to
+   * tell them apart is to move one without the other.
+   */
+  setTextureFilter(css: string): void {
+    this.ctx.filter = css || "none";
+  }
+
+  /**
+   * Bypass scene lighting by making the face emit its own texture.
+   *
+   * At 1.0 the face renders essentially as captured, ignoring the lights. If
+   * that fixes the darkness, the lighting was the cause, not the camera.
+   */
+  setSelfLit(intensity: number): void {
+    const mats = [this.material, this.fans.material];
+    for (const m of mats) {
+      m.emissiveMap = intensity > 0 ? m.map : null;
+      m.emissive.setScalar(intensity > 0 ? 1 : 0);
+      m.emissiveIntensity = intensity;
+      m.needsUpdate = true;
+    }
+  }
+
+  /** See HoleFans.eyeLift — cosmetic gaze nudge, exposed for tuning. */
+  setEyeLift(v: number): void {
+    this.fans.eyeLift = v;
+  }
+
   /** Blit a new face crop in. Skipping this call is what "hold last valid" is. */
   drawSource(src: CanvasImageSource, sx: number, sy: number, sw: number, sh: number): void {
     this.ctx.drawImage(src, sx, sy, sw, sh, 0, 0, CROP_SIZE, CROP_SIZE);

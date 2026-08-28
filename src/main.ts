@@ -6,6 +6,7 @@ import { FaceStateMachine, isUsableFace } from "./face/validity";
 import { CropBox } from "./face/faceMesh";
 import { Deformer, uvzToDeformSpace } from "./face/deform";
 import { M, timed } from "./metrics";
+import { Tuning } from "./tuning";
 import { Avatar, EYE_HEIGHT } from "./avatar";
 import { loadBody } from "./body";
 import { createScene } from "./scene";
@@ -48,7 +49,7 @@ function showStat(el: HTMLElement, st: { p50: number; p95: number }, warn: numbe
   el.className = "v" + (st.p95 >= bad ? " bad" : st.p95 >= warn ? " warn" : "");
 }
 
-const { renderer, scene, camera, resize } = createScene(canvas);
+const { renderer, scene, camera, resize, setLightScale } = createScene(canvas);
 const controls = new Controls(canvas);
 
 let landmarker: FaceLandmarker | null = null;
@@ -74,6 +75,74 @@ const encodeCanvas = document.createElement("canvas");
 encodeCanvas.width = encodeCanvas.height = JPEG_SIZE;
 const encodeCtx = encodeCanvas.getContext("2d")!;
 let encodeInFlight = false;
+
+// ------------------------------------------------------------------- tuning
+
+const tuning = new Tuning({
+  capture: {
+    title: "Face texture",
+    note: "Applied as the crop is blitted. Affects what peers see too.",
+    params: {
+      brightness: { label: "brightness", min: 0.2, max: 3, step: 0.05, value: 1, suffix: "×" },
+      contrast:   { label: "contrast",   min: 0.2, max: 3, step: 0.05, value: 1, suffix: "×" },
+      saturate:   { label: "saturate",   min: 0,   max: 3, step: 0.05, value: 1, suffix: "×" },
+      preview:    { label: "raw cam preview", min: 0, max: 1, step: 1, value: 0,
+                    hint: "Shows the unprocessed webcam feed. If that looks fine but the avatar is dark, the cause is lighting, not capture." },
+    },
+  },
+  lighting: {
+    title: "Lighting",
+    note: "The face is a lit material, so these change it without touching the texture.",
+    params: {
+      selfLit: { label: "self-lit", min: 0, max: 1, step: 0.05, value: 0, suffix: "×",
+                 hint: "1.0 makes the face ignore scene lights entirely." },
+      lights:  { label: "scene lights", min: 0, max: 3, step: 0.05, value: 1, suffix: "×" },
+    },
+  },
+  gaze: {
+    title: "Gaze",
+    note: "Shifts where the eye region samples the video. Cosmetic, not true gaze redirection.",
+    params: {
+      lift: { label: "eye lift", min: -0.06, max: 0.06, step: 0.002, value: 0,
+              hint: "Positive lifts the sampled iris, countering looking down at the screen." },
+    },
+  },
+  network: {
+    title: "Network",
+    params: {
+      faceHz:   { label: "face rate", min: 2, max: 20, step: 1, value: FACE_HZ, suffix: "Hz" },
+      quality:  { label: "jpeg quality", min: 0.2, max: 0.95, step: 0.05, value: JPEG_QUALITY },
+      maxBuffered: { label: "drop above", min: 0, max: 400, step: 10, value: 120, suffix: "KB",
+                     hint: "Skip a frame rather than queue it when the socket is this far behind. 0 disables." },
+    },
+  },
+});
+
+const camPreview = document.createElement("video");
+camPreview.autoplay = true; camPreview.playsInline = true; camPreview.muted = true;
+camPreview.style.cssText =
+  "position:fixed;bottom:12px;right:12px;width:220px;border:1px solid #232a38;" +
+  "border-radius:8px;z-index:19;display:none;background:#000";
+document.body.appendChild(camPreview);
+
+function applyTuning(): void {
+  const b = tuning.get("capture", "brightness");
+  const c = tuning.get("capture", "contrast");
+  const sat = tuning.get("capture", "saturate");
+  const filter = b === 1 && c === 1 && sat === 1
+    ? ""
+    : `brightness(${b}) contrast(${c}) saturate(${sat})`;
+  const selfLit = tuning.get("lighting", "selfLit");
+  // Peers get the same treatment, so what you tune is what everyone sees.
+  for (const head of [me?.head, ...[...peers.values()].map((p) => p.head)]) {
+    head?.setTextureFilter(filter);
+    head?.setSelfLit(selfLit);
+    head?.setEyeLift(tuning.get("gaze", "lift"));
+  }
+  setLightScale(tuning.get("lighting", "lights"));
+  camPreview.style.display = tuning.get("capture", "preview") ? "block" : "none";
+}
+tuning.onChange(applyTuning);
 
 function colorFor(id: number): number {
   return new THREE.Color().setHSL(((id * 0.618033) % 1), 0.55, 0.58).getHex();
@@ -105,6 +174,7 @@ const net = new NetClient({
     // Same rest pose plus the same UV+z stream means a peer's deformer lands on
     // exactly the mesh its owner is rendering.
     peerDeformers.set(id, new Deformer(rest));
+    applyTuning();
     const p = pendingPose.get(id);
     if (p) av.snapTo(p.x, p.y, p.z, p.yaw);
   },
@@ -167,6 +237,7 @@ function finishCalibration(): void {
   me = new Avatar(rest, myColor || colorFor(1));
   deformer = new Deformer(rest);
   scene.add(me.group);
+  applyTuning();
   calibrating = false;
   overlay.classList.add("hidden");
   barEl.classList.remove("on");
@@ -191,7 +262,7 @@ function recalibrate(): void {
 let lastFaceSend = 0;
 async function maybeSendFace(now: number): Promise<void> {
   if (!me || !net.connected) return;
-  if (now - lastFaceSend < 1000 / FACE_HZ) return;
+  if (now - lastFaceSend < 1000 / tuning.get("network", "faceHz")) return;
   // A send skipped because the previous encode is still running is the signal
   // that encoding, not the network, is capping the frame rate.
   if (encodeInFlight) {
@@ -204,14 +275,21 @@ async function maybeSendFace(now: number): Promise<void> {
   try {
     encodeCtx.drawImage(me.head.canvas, 0, 0, JPEG_SIZE, JPEG_SIZE);
     const blob = await new Promise<Blob | null>((res) =>
-      encodeCanvas.toBlob(res, "image/jpeg", JPEG_QUALITY)
+      encodeCanvas.toBlob(res, "image/jpeg", tuning.get("network", "quality"))
     );
     if (blob) {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       M.encode.push(performance.now() - t0);
       M.encodeBytes.push(bytes.byteLength);
-      net.send(encodeFace(uvScratch, zScratch, bytes));
-      M.faceSend.mark(performance.now());
+      // Queueing a real-time frame behind a backlog only makes it arrive later
+      // and staler. Past the threshold, drop it and send the next one instead.
+      const cap = tuning.get("network", "maxBuffered") * 1024;
+      if (cap > 0 && net.bufferedAmount > cap) {
+        M.dropped.push(net.bufferedAmount);
+      } else {
+        net.send(encodeFace(uvScratch, zScratch, bytes));
+        M.faceSend.mark(performance.now());
+      }
     }
   } finally {
     encodeInFlight = false;
@@ -350,7 +428,7 @@ function tick(): void {
     const hz = M.faceSend.perSecond(now);
     mEl.facehz.textContent = `${hz.toFixed(1)}/${FACE_HZ} Hz`;
     mEl.facehz.className = "v" + (hz < FACE_HZ * 0.6 ? " bad" : hz < FACE_HZ * 0.85 ? " warn" : "");
-    mEl.jpeg.textContent = `${(M.encodeBytes.p50 / 1024).toFixed(1)} KB`;
+    mEl.jpeg.textContent = `${(M.encodeBytes.p50 / 1024).toFixed(1)} KB · ${M.dropped.count} drop`;
 
     if (peers.size === 0) {
       mEl.peers.textContent = "none";
@@ -379,6 +457,7 @@ startBtn.addEventListener("click", async () => {
   try {
     statusEl.textContent = "Starting camera…";
     await openCamera(video);
+    camPreview.srcObject = video.srcObject;
     statusEl.textContent = "Loading face model…";
     // Both are needed before the first avatar exists, and neither depends on
     // the other.

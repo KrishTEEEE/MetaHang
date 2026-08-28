@@ -12,7 +12,8 @@ export function createScene(canvas: HTMLCanvasElement) {
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
 
-  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1a1f2b, 1.1));
+  const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x1a1f2b, 1.1);
+  scene.add(hemi);
   const key = new THREE.DirectionalLight(0xffffff, 1.5);
   key.position.set(5, 9, 6);
   key.castShadow = true;
@@ -48,5 +49,18 @@ export function createScene(canvas: HTMLCanvasElement) {
   resize();
   addEventListener("resize", resize);
 
-  return { renderer, scene, camera, resize };
+  /**
+   * The face is a *lit* MeshStandardMaterial, so scene brightness directly
+   * changes how dark a face looks. Exposed so the tuning panel can scale the
+   * lights independently of the texture, which is what separates a dark capture
+   * from dark lighting.
+   */
+  const baseIntensity = { hemi: hemi.intensity, key: key.intensity, fill: fill.intensity };
+  function setLightScale(scale: number): void {
+    hemi.intensity = baseIntensity.hemi * scale;
+    key.intensity = baseIntensity.key * scale;
+    fill.intensity = baseIntensity.fill * scale;
+  }
+
+  return { renderer, scene, camera, resize, setLightScale };
 }

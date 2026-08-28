@@ -139,6 +139,11 @@ export class NetClient {
     this.pingSentAt.clear();
   }
 
+  /** Live send-buffer depth, so callers can drop rather than pile on. */
+  get bufferedAmount(): number {
+    return this.ws?.readyState === WebSocket.OPEN ? this.ws.bufferedAmount : 0;
+  }
+
   /** Bytes sitting in the socket's send buffer — the backpressure signal. */
   sampleBuffered(): void {
     if (this.ws?.readyState === WebSocket.OPEN) M.buffered.push(this.ws.bufferedAmount);
