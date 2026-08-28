@@ -9,7 +9,7 @@
     "server": "tsx watch server/index.ts",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/codec.test.ts && tsx test/face.test.ts && tsx test/controls.test.ts && tsx test/cranium.test.ts && tsx test/deform.test.ts && tsx test/holes.test.ts && tsx test/body.test.ts",
+    "test": "tsx test/codec.test.ts && tsx test/face.test.ts && tsx test/controls.test.ts && tsx test/cranium.test.ts && tsx test/deform.test.ts && tsx test/holes.test.ts && tsx test/body.test.ts && tsx test/metrics.test.ts",
     "test:relay": "node test/relay.test.mjs",
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=cjs --target=node22 --external:bufferutil --external:utf-8-validate --outfile=server-dist/index.cjs"
   },

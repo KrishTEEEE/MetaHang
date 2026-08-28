@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 
 // Deliberately not `PORT` — dev harnesses set that for the web server, and the
@@ -7,6 +8,8 @@ const PORT = Number(process.env.WS_PORT ?? 8787);
 const MSG_POSE = 1;
 const MSG_FACE = 2;
 const MSG_IDENTITY = 3;
+const MSG_PING = 4;
+const MSG_PONG = 5;
 
 type Peer = {
   id: number;
@@ -36,13 +39,63 @@ function originAllowed(origin: string | undefined): boolean {
   return !!origin && ALLOWED_ORIGINS.includes(origin);
 }
 
+/** Relay-side counters, exposed at /stats for latency analysis. */
+const startedAt = Date.now();
+const stats = {
+  connectionsTotal: 0,
+  pings: 0,
+  msgs: { pose: 0, face: 0, identity: 0 },
+  bytesIn: 0,
+  bytesOut: 0,
+  fanoutSends: 0,
+};
+
+function snapshot() {
+  const roomSizes: Record<string, number> = {};
+  for (const [name, set] of rooms) roomSizes[name] = set.size;
+  const uptimeS = (Date.now() - startedAt) / 1000;
+  return {
+    uptimeSeconds: Math.round(uptimeS),
+    connectionsOpen: wss.clients.size,
+    connectionsTotal: stats.connectionsTotal,
+    rooms: roomSizes,
+    messages: stats.msgs,
+    pings: stats.pings,
+    bytesIn: stats.bytesIn,
+    bytesOut: stats.bytesOut,
+    fanoutSends: stats.fanoutSends,
+    bytesInPerSec: Math.round(stats.bytesIn / Math.max(1, uptimeS)),
+    bytesOutPerSec: Math.round(stats.bytesOut / Math.max(1, uptimeS)),
+  };
+}
+
+// An explicit HTTP server, rather than letting ws create its own, so the relay
+// can also answer /stats and /health. Everything else gets 426.
+const httpServer = createServer((req, res) => {
+  if (req.url === "/stats") {
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+    });
+    res.end(JSON.stringify(snapshot(), null, 2));
+  } else if (req.url === "/health") {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  } else {
+    res.writeHead(426, { "content-type": "text/plain" });
+    res.end("websocket endpoint");
+  }
+});
+
 // host is explicit because the default binds differently inside a container
 // than it does on a laptop, and a relay bound to loopback is invisible to Fly.
-const wss = new WebSocketServer({ port: PORT, host: "0.0.0.0" });
-console.log(
-  `[facehangout] relay listening on 0.0.0.0:${PORT}` +
-    (ALLOWED_ORIGINS.length ? ` (origins: ${ALLOWED_ORIGINS.join(", ")})` : " (any origin)")
-);
+const wss = new WebSocketServer({ server: httpServer });
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(
+    `[facehangout] relay listening on 0.0.0.0:${PORT}` +
+      (ALLOWED_ORIGINS.length ? ` (origins: ${ALLOWED_ORIGINS.join(", ")})` : " (any origin)")
+  );
+});
 
 /**
  * Liveness ping. A clean close still arrives on its own, but a client that
@@ -66,7 +119,9 @@ const heartbeat = setInterval(() => {
 wss.on("close", () => clearInterval(heartbeat));
 
 function send(peer: Peer, data: Buffer | string): void {
-  if (peer.ws.readyState === WebSocket.OPEN) peer.ws.send(data);
+  if (peer.ws.readyState !== WebSocket.OPEN) return;
+  stats.bytesOut += typeof data === "string" ? Buffer.byteLength(data) : data.length;
+  peer.ws.send(data);
 }
 
 /** Relayed frames carry the sender id the server assigned, not one the client claims. */
@@ -90,6 +145,7 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const room = (url.searchParams.get("room") ?? "lobby").slice(0, 64);
   const peer: Peer = { id: nextId++ & 0xffff, ws, room };
+  stats.connectionsTotal++;
 
   let set = rooms.get(room);
   if (!set) rooms.set(room, (set = new Set()));
@@ -113,19 +169,39 @@ wss.on("connection", (ws, req) => {
     if (!isBinary) return;
     const buf = raw as Buffer;
     if (buf.length < 1) return;
+    stats.bytesIn += buf.length;
     const type = buf.readUInt8(0);
     const payload = buf.subarray(1);
 
-    if (type === MSG_IDENTITY) peer.identity = Buffer.from(payload);
-    else if (type === MSG_FACE) peer.lastFace = Buffer.from(payload);
-    else if (type === MSG_POSE) peer.lastPose = Buffer.from(payload);
-    else return;
+    // Latency probe: bounce it straight back, and do not count it as traffic.
+    if (type === MSG_PING) {
+      const pong = Buffer.allocUnsafe(1 + payload.length);
+      pong.writeUInt8(MSG_PONG, 0);
+      payload.copy(pong, 1);
+      send(peer, pong);
+      stats.pings++;
+      return;
+    }
+
+    if (type === MSG_IDENTITY) {
+      peer.identity = Buffer.from(payload);
+      stats.msgs.identity++;
+    } else if (type === MSG_FACE) {
+      peer.lastFace = Buffer.from(payload);
+      stats.msgs.face++;
+    } else if (type === MSG_POSE) {
+      peer.lastPose = Buffer.from(payload);
+      stats.msgs.pose++;
+    } else return;
 
     const framed = stamp(type, peer.id, payload);
     const members = rooms.get(peer.room);
     if (!members) return;
     for (const other of members) {
-      if (other !== peer) send(other, framed);
+      if (other !== peer) {
+        send(other, framed);
+        stats.fanoutSends++;
+      }
     }
   });
 

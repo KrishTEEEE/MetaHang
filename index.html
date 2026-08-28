@@ -19,13 +19,18 @@
       #cam, #faceframe { position: absolute; left: -9999px; top: -9999px; }
 
       #hud {
-        position: fixed; top: 12px; left: 12px;
+        position: fixed; top: 12px; left: 12px; max-height: 92vh; overflow-y: auto;
         background: rgba(12, 15, 22, 0.82);
         border: 1px solid #232a38; border-radius: 8px;
-        padding: 10px 12px; min-width: 210px;
+        padding: 10px 12px; min-width: 232px;
         backdrop-filter: blur(8px);
       }
       #hud h1 { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #7c8798; margin-bottom: 8px; font-weight: 600; }
+      #hud h1.sub { margin-top: 10px; padding-top: 8px; border-top: 1px solid #232a38; font-size: 10px; }
+      #hud .peers { color: #98a2b3; font-size: 11px; white-space: pre; line-height: 1.45; }
+      #hud .hint { margin-top: 9px; color: #667085; font-size: 10px; }
+      #hud .warn { color: #fbbf24 !important; }
+      #hud .bad { color: #f87171 !important; }
       #hud .row { display: flex; justify-content: space-between; gap: 16px; }
       #hud .k { color: #7c8798; }
       #hud .v { color: #e8ecf4; }
@@ -70,6 +75,24 @@
       <div class="row"><span class="k">fps</span><span class="v" id="hud-fps">—</span></div>
       <div class="row"><span class="k">peers</span><span class="v" id="hud-peers">—</span></div>
       <div class="row"><span class="k">net</span><span class="v" id="hud-net">—</span></div>
+
+      <h1 class="sub">pipeline · p50/p95 ms</h1>
+      <div class="row"><span class="k">detect</span><span class="v" id="m-detect">—</span></div>
+      <div class="row"><span class="k">crop</span><span class="v" id="m-crop">—</span></div>
+      <div class="row"><span class="k">deform</span><span class="v" id="m-deform">—</span></div>
+      <div class="row"><span class="k">encode</span><span class="v" id="m-encode">—</span></div>
+      <div class="row"><span class="k">render</span><span class="v" id="m-render">—</span></div>
+      <div class="row"><span class="k">frame</span><span class="v" id="m-frame">—</span></div>
+
+      <h1 class="sub">transport</h1>
+      <div class="row"><span class="k">rtt</span><span class="v" id="m-rtt">—</span></div>
+      <div class="row"><span class="k">buffered</span><span class="v" id="m-buf">—</span></div>
+      <div class="row"><span class="k">face out</span><span class="v" id="m-facehz">—</span></div>
+      <div class="row"><span class="k">jpeg</span><span class="v" id="m-jpeg">—</span></div>
+
+      <h1 class="sub">peers · gap/stale ms</h1>
+      <div id="m-peers" class="peers">—</div>
+      <div class="hint">press <b>M</b> to copy full metrics JSON</div>
     </div>
 
     <div id="help">WASD move &nbsp;·&nbsp; hold right-click to orbit &nbsp;·&nbsp; scroll to zoom &nbsp;·&nbsp; C recalibrate</div>

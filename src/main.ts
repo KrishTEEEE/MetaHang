@@ -5,6 +5,7 @@ import { Calibrator, VERTEX_COUNT } from "./face/calibrate";
 import { FaceStateMachine, isUsableFace } from "./face/validity";
 import { CropBox } from "./face/faceMesh";
 import { Deformer, uvzToDeformSpace } from "./face/deform";
+import { M, timed } from "./metrics";
 import { Avatar, EYE_HEIGHT } from "./avatar";
 import { loadBody } from "./body";
 import { createScene } from "./scene";
@@ -31,6 +32,21 @@ const hudState = $<HTMLSpanElement>("hud-state");
 const hudFps = $<HTMLSpanElement>("hud-fps");
 const hudPeers = $<HTMLSpanElement>("hud-peers");
 const hudNet = $<HTMLSpanElement>("hud-net");
+const mEl = {
+  detect: $<HTMLSpanElement>("m-detect"), crop: $<HTMLSpanElement>("m-crop"),
+  deform: $<HTMLSpanElement>("m-deform"), encode: $<HTMLSpanElement>("m-encode"),
+  render: $<HTMLSpanElement>("m-render"), frame: $<HTMLSpanElement>("m-frame"),
+  rtt: $<HTMLSpanElement>("m-rtt"), buf: $<HTMLSpanElement>("m-buf"),
+  facehz: $<HTMLSpanElement>("m-facehz"), jpeg: $<HTMLSpanElement>("m-jpeg"),
+  peers: $<HTMLDivElement>("m-peers"),
+};
+
+const n0 = (v: number) => (Number.isFinite(v) ? Math.round(v) : 0);
+/** "p50/p95" with a colour cue once a stage starts costing real time. */
+function showStat(el: HTMLElement, st: { p50: number; p95: number }, warn: number, bad: number): void {
+  el.textContent = `${n0(st.p50)}/${n0(st.p95)}`;
+  el.className = "v" + (st.p95 >= bad ? " bad" : st.p95 >= warn ? " warn" : "");
+}
 
 const { renderer, scene, camera, resize } = createScene(canvas);
 const controls = new Controls(canvas);
@@ -79,6 +95,7 @@ const net = new NetClient({
     peers.delete(id);
     peerDeformers.delete(id);
     pendingPose.delete(id);
+    M.dropPeer(id);
   },
   onIdentity(id, rest, color) {
     peers.get(id)?.dispose();
@@ -105,8 +122,10 @@ const net = new NetClient({
     if (!av) return;
     // Copy before awaiting: `jpeg` views the socket buffer.
     const blob = new Blob([jpeg.slice()], { type: "image/jpeg" });
+    const t0 = performance.now();
     try {
       const bmp = await createImageBitmap(blob);
+      M.peer(id).decode.push(performance.now() - t0);
       const still = peers.get(id);
       if (still !== av) return; // peer churned while decoding
       av.head.setUVs(uv);
@@ -171,10 +190,17 @@ function recalibrate(): void {
 
 let lastFaceSend = 0;
 async function maybeSendFace(now: number): Promise<void> {
-  if (!me || encodeInFlight || !net.connected) return;
+  if (!me || !net.connected) return;
   if (now - lastFaceSend < 1000 / FACE_HZ) return;
+  // A send skipped because the previous encode is still running is the signal
+  // that encoding, not the network, is capping the frame rate.
+  if (encodeInFlight) {
+    M.encodeQueued.push(now - lastFaceSend);
+    return;
+  }
   lastFaceSend = now;
   encodeInFlight = true;
+  const t0 = performance.now();
   try {
     encodeCtx.drawImage(me.head.canvas, 0, 0, JPEG_SIZE, JPEG_SIZE);
     const blob = await new Promise<Blob | null>((res) =>
@@ -182,7 +208,10 @@ async function maybeSendFace(now: number): Promise<void> {
     );
     if (blob) {
       const bytes = new Uint8Array(await blob.arrayBuffer());
+      M.encode.push(performance.now() - t0);
+      M.encodeBytes.push(bytes.byteLength);
       net.send(encodeFace(uvScratch, zScratch, bytes));
+      M.faceSend.mark(performance.now());
     }
   } finally {
     encodeInFlight = false;
@@ -200,7 +229,8 @@ let toneTick = 0;
 
 function tick(): void {
   requestAnimationFrame(tick);
-  const now = performance.now();
+  const frameStart = performance.now();
+  const now = frameStart;
   const dt = Math.min((now - lastFrame) / 1000, 0.1);
   lastFrame = now;
   fpsAvg += (1 / Math.max(dt, 1e-4) - fpsAvg) * 0.05;
@@ -211,7 +241,7 @@ function tick(): void {
   // being run twice on the same camera frame.
   if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
-    const res = landmarker.detectForVideo(video, now);
+    const res = timed(M.detect, () => landmarker!.detectForVideo(video, now));
     const lms = res.faceLandmarks?.[0] as Landmark[] | undefined;
     const aspect = video.videoWidth / Math.max(video.videoHeight, 1);
 
@@ -231,18 +261,22 @@ function tick(): void {
       const usable = isUsableFace(lms, aspect);
       const refresh = faceState.update(usable, now);
       if (refresh && lms && me) {
-        cropBox.update(lms, video.videoWidth, video.videoHeight);
-        cropBox.toUVs(lms, video.videoWidth, video.videoHeight, uvScratch);
-        cropBox.toZ(lms, video.videoWidth, zScratch);
-        me.head.setUVs(uvScratch);
-        me.head.drawSource(video, cropBox.x, cropBox.y, cropBox.w, cropBox.h);
+        timed(M.crop, () => {
+          cropBox.update(lms, video.videoWidth, video.videoHeight);
+          cropBox.toUVs(lms, video.videoWidth, video.videoHeight, uvScratch);
+          cropBox.toZ(lms, video.videoWidth, zScratch);
+          me!.head.setUVs(uvScratch);
+          me!.head.drawSource(video, cropBox.x, cropBox.y, cropBox.w, cropBox.h);
+        });
 
         // Expression only — the rigid fit strips head rotation out, so the head
         // keeps facing wherever the body faces while the face still animates.
         if (deformer) {
-          uvzToDeformSpace(uvScratch, zScratch, deformSpace);
-          deformer.update(deformSpace, posScratch);
-          me.head.setPositions(posScratch);
+          timed(M.deform, () => {
+            uvzToDeformSpace(uvScratch, zScratch, deformSpace);
+            deformer!.update(deformSpace, posScratch);
+            me!.head.setPositions(posScratch);
+          });
         }
       }
       me?.setAfk(faceState.state === "AFK");
@@ -263,6 +297,7 @@ function tick(): void {
         controls.position.x, 0, controls.position.z, controls.bodyYaw,
         STATE_CODE[faceState.state]
       ));
+      M.poseSend.mark(now);
     }
     if (faceState.state === "LIVE") void maybeSendFace(now);
   }
@@ -273,7 +308,7 @@ function tick(): void {
     p.animate(now / 1000);
   }
 
-  renderer.render(scene, camera);
+  timed(M.render, () => renderer.render(scene, camera));
 
   // getImageData is not free, so the cranium tint refreshes about once a second
   // rather than per frame. Nobody's colouring changes faster than that.
@@ -282,6 +317,9 @@ function tick(): void {
     me?.matchCraniumToFace();
     for (const p of peers.values()) p.matchCraniumToFace();
   }
+
+  M.frame.push(performance.now() - frameStart);
+  net.sampleBuffered();
 
   if (now - hudTick > 250) {
     hudTick = now;
@@ -293,8 +331,43 @@ function tick(): void {
     hudFps.textContent = fpsAvg.toFixed(0);
     hudPeers.textContent = String(peers.size);
     hudNet.textContent = net.connected
-      ? `${(net.bytesUp / 1024).toFixed(0)}k↑ ${(net.bytesDown / 1024).toFixed(0)}k↓`
+      ? `${(M.up.perSecond(now) / 1024).toFixed(0)}↑ ${(M.down.perSecond(now) / 1024).toFixed(0)}↓ KB/s`
       : "offline";
+
+    // A stage over ~16ms is eating a frame at 60fps; over 33ms it is halving it.
+    showStat(mEl.detect, M.detect, 16, 33);
+    showStat(mEl.crop, M.crop, 4, 10);
+    showStat(mEl.deform, M.deform, 4, 10);
+    showStat(mEl.encode, M.encode, 20, 50);
+    showStat(mEl.render, M.render, 8, 16);
+    showStat(mEl.frame, M.frame, 20, 40);
+    // RTT is the network floor; nothing downstream can be faster than this.
+    showStat(mEl.rtt, M.rtt, 120, 300);
+    // Anything persistently buffered means we are sending faster than the link.
+    mEl.buf.textContent = `${n0(M.buffered.p95)} B`;
+    mEl.buf.className = "v" + (M.buffered.p95 > 200_000 ? " bad" : M.buffered.p95 > 20_000 ? " warn" : "");
+
+    const hz = M.faceSend.perSecond(now);
+    mEl.facehz.textContent = `${hz.toFixed(1)}/${FACE_HZ} Hz`;
+    mEl.facehz.className = "v" + (hz < FACE_HZ * 0.6 ? " bad" : hz < FACE_HZ * 0.85 ? " warn" : "");
+    mEl.jpeg.textContent = `${(M.encodeBytes.p50 / 1024).toFixed(1)} KB`;
+
+    if (peers.size === 0) {
+      mEl.peers.textContent = "none";
+    } else {
+      const lines: string[] = [];
+      for (const id of peers.keys()) {
+        const pm = M.peer(id);
+        const stale = pm.lastFaceAt ? now - pm.lastFaceAt : NaN;
+        lines.push(
+          `#${id} gap ${n0(pm.faceGap.p50)}/${n0(pm.faceGap.p95)}` +
+            `  stale ${n0(stale)}` +
+            `  ${pm.faceRate.perSecond(now).toFixed(1)}fps` +
+            `  dec ${n0(pm.decode.p50)}`
+        );
+      }
+      mEl.peers.textContent = lines.join("\n");
+    }
   }
 }
 
@@ -323,6 +396,22 @@ startBtn.addEventListener("click", async () => {
 
 addEventListener("keydown", (e) => {
   if (e.code === "KeyC" && !calibrating && landmarker) recalibrate();
+  if (e.code === "KeyM") {
+    const snap = {
+      ...M.snapshot(performance.now()),
+      room: new URLSearchParams(location.search).get("room") ?? "lobby",
+      userAgent: navigator.userAgent,
+      relay: import.meta.env.VITE_RELAY_URL ?? "(dev proxy)",
+      videoSize: [video.videoWidth, video.videoHeight],
+      peerCount: peers.size,
+    };
+    const json = JSON.stringify(snap, null, 2);
+    console.log("[metrics]", snap);
+    navigator.clipboard?.writeText(json).then(
+      () => console.log("[metrics] copied to clipboard"),
+      () => console.log("[metrics] clipboard blocked — copy from the object above")
+    );
+  }
 });
 
 tick();

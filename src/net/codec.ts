@@ -3,6 +3,22 @@ import { VERTEX_COUNT } from "../face/calibrate";
 export const MSG_POSE = 1;
 export const MSG_FACE = 2;
 export const MSG_IDENTITY = 3;
+/**
+ * Latency probe. The client sends a sequence number, the relay echoes it back
+ * unchanged; the client matches it against the send time to get a round trip.
+ * Deliberately not stamped with wall-clock time — the two machines' clocks are
+ * not synchronised, and a round trip needs only one clock.
+ */
+export const MSG_PING = 4;
+export const MSG_PONG = 5;
+
+export function encodePing(seq: number): ArrayBuffer {
+  const buf = new ArrayBuffer(5);
+  const dv = new DataView(buf);
+  dv.setUint8(0, MSG_PING);
+  dv.setUint32(1, seq, true);
+  return buf;
+}
 
 export const STATE_CODE = { LIVE: 0, HELD: 1, AFK: 2 } as const;
 export const STATE_NAME = ["LIVE", "HELD", "AFK"] as const;
