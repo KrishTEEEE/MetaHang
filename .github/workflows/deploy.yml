@@ -29,7 +29,7 @@ jobs:
       - run: npm run build
         env:
           # Pages serves a project site under /<repo>/.
-          VITE_BASE: /Metang/
+          VITE_BASE: /MetaHang/
           # Repo variable, so the relay can move without a code change.
           VITE_RELAY_URL: ${{ vars.RELAY_URL }}
       - uses: actions/upload-pages-artifact@v3

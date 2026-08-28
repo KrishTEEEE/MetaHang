@@ -2,7 +2,7 @@
 
 Two pieces, deployed separately:
 
-- **Client** — static Vite build on **GitHub Pages** at `https://krishteee.github.io/Metang/`
+- **Client** — static Vite build on **GitHub Pages** at `https://krishteeee.github.io/MetaHang/`
 - **Relay** — Node WebSocket server on **Fly.io** at `wss://metang-relay.fly.dev`
 
 Pages cannot run the relay: it serves files only, and the relay is a long-lived
@@ -55,7 +55,7 @@ RELAY_URL=wss://metang-relay.fly.dev npm run test:relay
 ## Client — remaining steps
 
 The workflow (`.github/workflows/deploy.yml`) is written and runs on push to
-`main`. It typechecks, runs the 128 assertions, builds with `VITE_BASE=/Metang/`,
+`main`. It typechecks, runs the 128 assertions, builds with `VITE_BASE=/MetaHang/`,
 and publishes `dist/`.
 
 1. **Merge the branch.**
@@ -64,7 +64,7 @@ and publishes `dist/`.
    ```
 2. **Make the repo public** — Pages needs it on a free plan.
    ```bash
-   gh repo edit KrishTEEEE/Metang --visibility public --accept-visibility-change-consequences
+   gh repo edit KrishTEEEE/MetaHang --visibility public --accept-visibility-change-consequences
    ```
 3. **Set the relay URL** as a repo variable, so it can change without a code edit:
    ```bash
@@ -73,14 +73,14 @@ and publishes `dist/`.
 4. **Enable Pages**: repo Settings → Pages → Source = **GitHub Actions**.
 5. Re-run the workflow if it ran before step 3 (`gh run rerun` or push again).
 
-Then open `https://krishteee.github.io/Metang/?room=test` in two browsers.
+Then open `https://krishteeee.github.io/MetaHang/?room=test` in two browsers.
 
 ### Lock the relay down once the URL is known
 
 The relay currently accepts any origin. Once Pages is live:
 
 ```bash
-./.fly/bin/flyctl secrets set ALLOWED_ORIGIN="https://krishteee.github.io"
+./.fly/bin/flyctl secrets set ALLOWED_ORIGIN="https://krishteeee.github.io"
 ```
 
 Leave it unset for local development, where any origin is wanted.
