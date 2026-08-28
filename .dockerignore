@@ -1,0 +1,16 @@
+# The relay needs only package manifests and server/. Everything else — the
+# 32 MB of MediaPipe wasm in particular — would just slow the build context.
+node_modules
+dist
+server-dist
+public
+docs
+src
+test
+index.html
+vite.config.ts
+.git
+.gitignore
+.fly
+.claude
+*.md

@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { BASE } from "./basePath";
 
-const BODY_URL = "/models/body.glb";
+const BODY_URL = `${BASE}models/body.glb`;
 
 /**
  * The idle breathe, as a uniform scale about the feet.

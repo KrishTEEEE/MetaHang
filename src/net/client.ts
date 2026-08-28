@@ -15,27 +15,44 @@ export type NetHandlers = {
 export class NetClient {
   private ws?: WebSocket;
   private queue: ArrayBuffer[] = [];
+  private attempt = 0;
   bytesUp = 0;
   bytesDown = 0;
   connected = false;
 
   constructor(private readonly handlers: NetHandlers) {}
 
+  /**
+   * Relay address. In production VITE_RELAY_URL points at the deployed relay,
+   * because a static host has nothing listening on /ws. Unset locally, where the
+   * Vite dev proxy forwards /ws to the relay on 8787.
+   */
+  private relayUrl(room: string): string {
+    const configured = import.meta.env.VITE_RELAY_URL?.replace(/\/+$/, "");
+    const base = configured
+      ? `${configured}/`
+      : `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`;
+    return `${base}?room=${encodeURIComponent(room)}`;
+  }
+
   connect(room: string): void {
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${location.host}/ws?room=${encodeURIComponent(room)}`);
+    const ws = new WebSocket(this.relayUrl(room));
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
     ws.onopen = () => {
       this.connected = true;
+      this.attempt = 0;
       for (const m of this.queue) ws.send(m);
       this.queue.length = 0;
     };
     ws.onclose = () => {
       this.connected = false;
-      // Single-player still works fine without the relay, so retry quietly.
-      setTimeout(() => this.connect(room), 2000);
+      // Single-player still works fine without the relay, so retry quietly —
+      // but back off, so a page with no relay configured at all does not
+      // reconnect twice a second forever.
+      const delay = Math.min(30_000, 1000 * 2 ** this.attempt++);
+      setTimeout(() => this.connect(room), delay);
     };
     ws.onerror = () => ws.close();
     ws.onmessage = (ev) => this.receive(ev.data);

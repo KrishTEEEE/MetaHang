@@ -21,8 +21,49 @@ type Peer = {
 const rooms = new Map<string, Set<Peer>>();
 let nextId = 1;
 
-const wss = new WebSocketServer({ port: PORT });
-console.log(`[facehangout] relay listening on ws://localhost:${PORT}`);
+/**
+ * Comma-separated list of origins allowed to connect. Unset means allow all,
+ * which is what local development wants. Set it in production so a public relay
+ * is not free capacity for anyone who finds the URL.
+ */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+function originAllowed(origin: string | undefined): boolean {
+  if (ALLOWED_ORIGINS.length === 0) return true;
+  return !!origin && ALLOWED_ORIGINS.includes(origin);
+}
+
+// host is explicit because the default binds differently inside a container
+// than it does on a laptop, and a relay bound to loopback is invisible to Fly.
+const wss = new WebSocketServer({ port: PORT, host: "0.0.0.0" });
+console.log(
+  `[facehangout] relay listening on 0.0.0.0:${PORT}` +
+    (ALLOWED_ORIGINS.length ? ` (origins: ${ALLOWED_ORIGINS.join(", ")})` : " (any origin)")
+);
+
+/**
+ * Liveness ping. A clean close still arrives on its own, but a client that
+ * vanishes — laptop lid, dropped wifi — never sends one, and through a proxy the
+ * dead socket can linger indefinitely. Without this, phantom peers accumulate in
+ * rooms and everyone keeps seeing an avatar that left.
+ */
+const HEARTBEAT_MS = 15_000;
+const alive = new WeakMap<WebSocket, boolean>();
+
+const heartbeat = setInterval(() => {
+  for (const client of wss.clients) {
+    if (alive.get(client) === false) {
+      client.terminate();
+      continue;
+    }
+    alive.set(client, false);
+    client.ping();
+  }
+}, HEARTBEAT_MS);
+wss.on("close", () => clearInterval(heartbeat));
 
 function send(peer: Peer, data: Buffer | string): void {
   if (peer.ws.readyState === WebSocket.OPEN) peer.ws.send(data);
@@ -38,6 +79,14 @@ function stamp(type: number, id: number, payload: Buffer): Buffer {
 }
 
 wss.on("connection", (ws, req) => {
+  if (!originAllowed(req.headers.origin)) {
+    console.log(`[!] rejected origin ${req.headers.origin ?? "<none>"}`);
+    ws.close(1008, "origin not allowed");
+    return;
+  }
+  alive.set(ws, true);
+  ws.on("pong", () => alive.set(ws, true));
+
   const url = new URL(req.url ?? "/", "http://localhost");
   const room = (url.searchParams.get("room") ?? "lobby").slice(0, 64);
   const peer: Peer = { id: nextId++ & 0xffff, ws, room };

@@ -30,3 +30,9 @@ npm-debug.log*
 # launch.json is kept deliberately — it is the shared dev-server config.
 .claude/*
 !.claude/launch.json
+
+# flyctl, installed project-local
+.fly/
+
+# bundled server output
+server-dist/

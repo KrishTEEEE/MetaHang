@@ -1,0 +1,19 @@
+# FaceHangout WebSocket relay.
+app = "metang-relay"
+primary_region = "lhr"
+
+[build]
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # The relay idles at zero cost between demos: Fly stops the machine when no
+  # connections remain and wakes it (~1-3s) on the next one. A room with people
+  # in it holds open sockets, so it stays up while it matters.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

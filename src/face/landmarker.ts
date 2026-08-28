@@ -1,4 +1,5 @@
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
+import { BASE } from "../basePath";
 
 export type Landmark = { x: number; y: number; z: number };
 
@@ -23,10 +24,10 @@ export function buildFaceTriangles(): Uint16Array {
 }
 
 export async function createLandmarker(): Promise<FaceLandmarker> {
-  const fileset = await FilesetResolver.forVisionTasks("/wasm");
+  const fileset = await FilesetResolver.forVisionTasks(`${BASE}wasm`);
   return FaceLandmarker.createFromOptions(fileset, {
     baseOptions: {
-      modelAssetPath: "/models/face_landmarker.task",
+      modelAssetPath: `${BASE}models/face_landmarker.task`,
       delegate: "GPU",
     },
     runningMode: "VIDEO",
