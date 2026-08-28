@@ -76,6 +76,52 @@ encodeCanvas.width = encodeCanvas.height = JPEG_SIZE;
 const encodeCtx = encodeCanvas.getContext("2d")!;
 let encodeInFlight = false;
 
+/**
+ * Off-thread JPEG encoder. Falls back to the main thread if the browser lacks
+ * OffscreenCanvas, so this is an optimisation rather than a requirement.
+ */
+const encodeWorker: Worker | null = (() => {
+  try {
+    if (typeof OffscreenCanvas === "undefined") return null;
+    return new Worker(new URL("./encodeWorker.ts", import.meta.url), { type: "module" });
+  } catch {
+    return null;
+  }
+})();
+
+let encodeReqId = 0;
+const encodeWaiting = new Map<number, (b: ArrayBuffer | null) => void>();
+if (encodeWorker) {
+  encodeWorker.onmessage = (e: MessageEvent<{ id: number; buf?: ArrayBuffer }>) => {
+    const done = encodeWaiting.get(e.data.id);
+    if (!done) return;
+    encodeWaiting.delete(e.data.id);
+    done(e.data.buf ?? null);
+  };
+}
+
+async function encodeJpeg(source: HTMLCanvasElement, quality: number): Promise<Uint8Array | null> {
+  const useWorker = encodeWorker && tuning.get("network", "worker") === 1;
+  if (useWorker) {
+    const t0 = performance.now();
+    const bitmap = await createImageBitmap(source);
+    M.bitmap.push(performance.now() - t0);
+    const id = ++encodeReqId;
+    const t1 = performance.now();
+    const buf = await new Promise<ArrayBuffer | null>((res) => {
+      encodeWaiting.set(id, res);
+      encodeWorker!.postMessage({ id, bitmap, size: JPEG_SIZE, quality }, [bitmap]);
+    });
+    M.workerEncode.push(performance.now() - t1);
+    return buf ? new Uint8Array(buf) : null;
+  }
+  encodeCtx.drawImage(source, 0, 0, JPEG_SIZE, JPEG_SIZE);
+  const blob = await new Promise<Blob | null>((res) =>
+    encodeCanvas.toBlob(res, "image/jpeg", quality)
+  );
+  return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+}
+
 // ------------------------------------------------------------------- tuning
 
 const tuning = new Tuning({
@@ -115,6 +161,8 @@ const tuning = new Tuning({
     params: {
       faceHz:   { label: "face rate", min: 2, max: 20, step: 1, value: FACE_HZ, suffix: "Hz" },
       quality:  { label: "jpeg quality", min: 0.2, max: 0.95, step: 0.05, value: JPEG_QUALITY },
+      worker: { label: "off-thread encode", kind: "toggle", min: 0, max: 1, step: 1, value: 1,
+                hint: "Encode JPEG in a worker instead of on the main thread, where it competes with MediaPipe. Toggle to A/B it." },
       maxBuffered: { label: "drop above", min: 0, max: 400, step: 10, value: 190, suffix: "KB",
                      hint: "Skip a frame rather than queue it when the socket is this far behind. 0 disables." },
     },
@@ -283,12 +331,8 @@ async function maybeSendFace(now: number): Promise<void> {
   encodeInFlight = true;
   const t0 = performance.now();
   try {
-    encodeCtx.drawImage(me.head.canvas, 0, 0, JPEG_SIZE, JPEG_SIZE);
-    const blob = await new Promise<Blob | null>((res) =>
-      encodeCanvas.toBlob(res, "image/jpeg", tuning.get("network", "quality"))
-    );
-    if (blob) {
-      const bytes = new Uint8Array(await blob.arrayBuffer());
+    const bytes = await encodeJpeg(me.head.canvas, tuning.get("network", "quality"));
+    if (bytes) {
       M.encode.push(performance.now() - t0);
       M.encodeBytes.push(bytes.byteLength);
       // Queueing a real-time frame behind a backlog only makes it arrive later

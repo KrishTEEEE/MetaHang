@@ -153,6 +153,8 @@ export const M = {
   encodeBytes: new Stat("B"),
   encodeQueued: new Stat("ms"), // time a send waited because one was in flight
   dropped: new Stat("B"), // frames abandoned rather than queued behind a backlog
+  bitmap: new Stat("ms"), // createImageBitmap on the main thread
+  workerEncode: new Stat("ms"), // round trip to the encode worker
 
   // --- transport ---
   rtt: new Stat("ms"), // app-level ping through the relay
@@ -188,6 +190,8 @@ export const M = {
         encodeBytes: this.encodeBytes.snapshot(),
         encodeQueuedMs: this.encodeQueued.snapshot(),
         droppedFrames: this.dropped.count,
+        bitmapMs: this.bitmap.snapshot(),
+        workerEncodeMs: this.workerEncode.snapshot(),
       },
       transport: {
         rttMs: this.rtt.snapshot(),
