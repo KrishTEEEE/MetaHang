@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
-import { createLandmarker, openCamera, type Landmark } from "./face/landmarker";
+import { createLandmarker, describeCameraError, openCamera, type Landmark } from "./face/landmarker";
 import { Calibrator, VERTEX_COUNT } from "./face/calibrate";
 import { FaceStateMachine, isUsableFace } from "./face/validity";
 import { CropBox } from "./face/faceMesh";
@@ -521,9 +521,15 @@ startBtn.addEventListener("click", async () => {
     const room = new URLSearchParams(location.search).get("room") ?? "lobby";
     net.connect(room);
   } catch (e) {
+    // The button becomes the retry, since every one of these causes is
+    // something the user fixes and tries again — not a dead end.
     startBtn.disabled = false;
-    startBtn.textContent = "Enable camera";
-    errEl.textContent = String(e instanceof Error ? e.message : e);
+    startBtn.style.display = "";
+    startBtn.textContent = "Retry";
+    statusEl.textContent = "";
+    barEl.classList.remove("on");
+    errEl.textContent = describeCameraError(e);
+    console.error("[camera]", e);
   }
 });
 
