@@ -15,6 +15,8 @@ export type Param = {
   max: number;
   step: number;
   value: number;
+  /** "toggle" renders an on/off button; anything else renders a slider. */
+  kind?: "slider" | "toggle";
   /** Rendered next to the value, e.g. "×" or "px". */
   suffix?: string;
   hint?: string;
@@ -129,6 +131,8 @@ export class Tuning<G extends Record<string, Group>> {
       #tuning button { flex: 1; background: #232a38; color: #e8ecf4; border: 0;
         border-radius: 5px; padding: 6px; font: inherit; cursor: pointer; }
       #tuning button:hover { background: #2f3949; }
+      #tuning button.toggle { width: 100%; text-align: left; padding: 7px 9px; }
+      #tuning button.toggle.on { background: #14453f; color: #5eead4; }
     </style><h2>Tuning &nbsp;<span style="color:#667085">T to hide</span></h2>`;
 
     for (const gKey of Object.keys(this.groups)) {
@@ -146,6 +150,31 @@ export class Tuning<G extends Record<string, Group>> {
         const p = g.params[pKey];
         const wrap = document.createElement("div");
         wrap.className = "p";
+
+        if (p.kind === "toggle") {
+          const btn = document.createElement("button");
+          btn.className = "toggle";
+          const paint = () => {
+            btn.textContent = `${p.label}: ${p.value ? "on" : "off"}`;
+            btn.classList.toggle("on", !!p.value);
+          };
+          paint();
+          btn.onclick = () => {
+            p.value = p.value ? 0 : 1;
+            paint();
+            this.emit();
+          };
+          wrap.appendChild(btn);
+          if (p.hint) {
+            const hint = document.createElement("div");
+            hint.className = "hint";
+            hint.textContent = p.hint;
+            wrap.appendChild(hint);
+          }
+          root.appendChild(wrap);
+          continue;
+        }
+
         const lab = document.createElement("div");
         lab.className = "lab";
         const val = document.createElement("i");

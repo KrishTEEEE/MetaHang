@@ -83,28 +83,31 @@ const tuning = new Tuning({
     title: "Face texture",
     note: "Applied as the crop is blitted. Affects what peers see too.",
     params: {
-      brightness: { label: "brightness", min: 0.2, max: 3, step: 0.05, value: 1, suffix: "×" },
+      brightness: { label: "brightness", min: 0.2, max: 3, step: 0.05, value: 1.6, suffix: "×" },
       contrast:   { label: "contrast",   min: 0.2, max: 3, step: 0.05, value: 1, suffix: "×" },
       saturate:   { label: "saturate",   min: 0,   max: 3, step: 0.05, value: 1, suffix: "×" },
-      preview:    { label: "raw cam preview", min: 0, max: 1, step: 1, value: 0,
-                    hint: "Shows the unprocessed webcam feed. If that looks fine but the avatar is dark, the cause is lighting, not capture." },
+      preview:    { label: "raw cam preview", kind: "toggle", min: 0, max: 1, step: 1, value: 0,
+                    hint: "Unprocessed webcam feed. If that looks fine while the avatar is dark, the cause is lighting, not capture." },
     },
   },
   lighting: {
     title: "Lighting",
     note: "The face is a lit material, so these change it without touching the texture.",
     params: {
-      selfLit: { label: "self-lit", min: 0, max: 1, step: 0.05, value: 0, suffix: "×",
+      selfLit: { label: "self-lit", min: 0, max: 1, step: 0.05, value: 0.25, suffix: "×",
                  hint: "1.0 makes the face ignore scene lights entirely." },
-      lights:  { label: "scene lights", min: 0, max: 3, step: 0.05, value: 1, suffix: "×" },
+      lights:  { label: "scene lights", min: 0, max: 4, step: 0.05, value: 2.65, suffix: "×" },
     },
   },
   gaze: {
     title: "Gaze",
     note: "Shifts where the eye region samples the video. Cosmetic, not true gaze redirection.",
     params: {
-      lift: { label: "eye lift", min: -0.06, max: 0.06, step: 0.002, value: 0,
-              hint: "Positive lifts the sampled iris, countering looking down at the screen." },
+      // Texture v is 1 - normalised image y, so *lower* v samples further down
+      // the image. Looking at a screen puts the iris low in the eye opening, so
+      // countering it needs a negative value, not a positive one.
+      lift: { label: "eye lift", min: -0.06, max: 0.06, step: 0.002, value: -0.008,
+              hint: "Negative samples lower, countering eyes aimed down at a screen." },
     },
   },
   network: {
@@ -112,7 +115,7 @@ const tuning = new Tuning({
     params: {
       faceHz:   { label: "face rate", min: 2, max: 20, step: 1, value: FACE_HZ, suffix: "Hz" },
       quality:  { label: "jpeg quality", min: 0.2, max: 0.95, step: 0.05, value: JPEG_QUALITY },
-      maxBuffered: { label: "drop above", min: 0, max: 400, step: 10, value: 120, suffix: "KB",
+      maxBuffered: { label: "drop above", min: 0, max: 400, step: 10, value: 190, suffix: "KB",
                      hint: "Skip a frame rather than queue it when the socket is this far behind. 0 disables." },
     },
   },
@@ -133,11 +136,18 @@ function applyTuning(): void {
     ? ""
     : `brightness(${b}) contrast(${c}) saturate(${sat})`;
   const selfLit = tuning.get("lighting", "selfLit");
-  // Peers get the same treatment, so what you tune is what everyone sees.
+  const lift = tuning.get("gaze", "lift");
+
+  // The filter runs on the canvas that gets JPEG-encoded, so it is already
+  // baked into what peers receive. Applying it to their heads as well would
+  // brighten twice (1.6 x 1.6). Capture settings are the sender's business.
+  me?.head.setTextureFilter(filter);
+
+  // Lighting and gaze are local render choices, so they do apply to everyone
+  // on screen — each viewer corrects what they see.
   for (const head of [me?.head, ...[...peers.values()].map((p) => p.head)]) {
-    head?.setTextureFilter(filter);
     head?.setSelfLit(selfLit);
-    head?.setEyeLift(tuning.get("gaze", "lift"));
+    head?.setEyeLift(lift);
   }
   setLightScale(tuning.get("lighting", "lights"));
   camPreview.style.display = tuning.get("capture", "preview") ? "block" : "none";
