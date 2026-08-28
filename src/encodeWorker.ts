@@ -19,7 +19,8 @@ self.onmessage = async (e: MessageEvent<Req>) => {
       canvas = new OffscreenCanvas(size, size);
       ctx = canvas.getContext("2d");
     }
-    ctx!.drawImage(bitmap, 0, 0, size, size);
+    // The bitmap already arrives at `size`; drawing 1:1 avoids a second rescale.
+    ctx!.drawImage(bitmap, 0, 0);
     bitmap.close();
     const blob = await canvas.convertToBlob({ type: "image/jpeg", quality });
     const buf = await blob.arrayBuffer();

@@ -104,7 +104,14 @@ async function encodeJpeg(source: HTMLCanvasElement, quality: number): Promise<U
   const useWorker = encodeWorker && tuning.get("network", "worker") === 1;
   if (useWorker) {
     const t0 = performance.now();
-    const bitmap = await createImageBitmap(source);
+    // Resize here rather than in the worker: the browser can do this on the
+    // GPU, and it cuts the transferred bitmap from 256x256 to 160x160 — 2.5x
+    // fewer pixels to hand across and for convertToBlob to chew through.
+    const bitmap = await createImageBitmap(source, {
+      resizeWidth: JPEG_SIZE,
+      resizeHeight: JPEG_SIZE,
+      resizeQuality: "medium",
+    });
     M.bitmap.push(performance.now() - t0);
     const id = ++encodeReqId;
     const t1 = performance.now();
